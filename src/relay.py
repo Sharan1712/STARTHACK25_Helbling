@@ -1,44 +1,73 @@
+import warnings
+warnings.filterwarnings('ignore')
+from dotenv import load_dotenv
+load_dotenv()
+
+import logging
+log = logging.getLogger('werkzeug')
+log.setLevel(logging.ERROR)
+
 import uuid
 import json
 import os
+import random
 
 from flask import Flask, request, jsonify
-import azure.cognitiveservices.speech as speechsdk
 from flask_sock import Sock
 from flask_cors import CORS
 from flasgger import Swagger
 
+from database_conn import ConversationDB
+from database_conn import AudioVectorDB
+
 from openai import OpenAI
+import pandas as pd
 import io
 
-AZURE_SPEECH_KEY = "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"
-AZURE_SPEECH_REGION = "switzerlandnorth"
-OPENAI_KEY = "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"
+AZURE_SPEECH_KEY = os.getenv("AZURE_SPEECH_KEY")
+AZURE_SPEECH_REGION = os.getenv("AZURE_SPEECH_REGION")
+OPENAI_KEY = os.getenv("OPENAI_KEY")
 client = OpenAI(api_key=OPENAI_KEY)
+
 
 app = Flask(__name__)
 sock = Sock(app)
 cors = CORS(app)
 swagger = Swagger(app)
 
+memory_database = ConversationDB()
+audio_database = AudioVectorDB()
+
+with open("src/constants.txt", "r") as f:
+  users = int(f.read())
+
+blue = '\033[94m'
+green = '\033[92m'
+reset = '\033[0m'
+
 sessions = {}
 chats = {}
 
+def save_audio(audio_file):
+    with open(audio_file.name, "wb") as f:
+      f.write(audio_file.getvalue())
+
 def add_message_to_history(chat_session_id, role, msg):  
   if chats[chat_session_id]["conversation_history"] is not None:
-    chats[chat_session_id]["conversation_history"].append({"role":role,"message":msg.get('text')})
+    chats[chat_session_id]["conversation_history"].append({"role":role,"content":msg.get('text')})
   else:
-    chats[chat_session_id]["conversation_history"] = [{"role":role,"message":msg.get('text')}]
+    chats[chat_session_id]["conversation_history"] = [{"role":role,"content":msg.get('text')}]
 
 def transcribe_whisper(audio_recording):
     audio_file = io.BytesIO(audio_recording)
     audio_file.name = 'audio.wav'  # Whisper requires a filename with a valid extension
+    save_audio(audio_file)
     transcription = client.audio.transcriptions.create(
         model="whisper-1",
         file=audio_file,
         #language = ""  # specify Language explicitly
     )
-    print(f"openai transcription: {transcription.text}")
+    print(f"{green}USER MESSAGE: {transcription.text}{reset}")
     return transcription.text
     
 def transcribe_preview(session):
@@ -98,24 +127,33 @@ def open_session(chat_session_id):
               description: Description of the error
     """
     session_id = str(uuid.uuid4())
-    print("OPEN SESSION")
+    print("----------------------------------SESSION START-----------------------------------------------------")
 
     body = request.get_json()
     if "language" not in body:
         return jsonify({"error": "Language not specified"}), 400
     language = body["language"]
-
+    
     sessions[session_id] = {
         "audio_buffer": None,
         "chatSessionId": chat_session_id,
         "language": language,
+        "text": None,
+        "user_status": None,
+        "user_id": None,
+        "conversation_history": None,
+        "memories": None,
         "websocket": None,  # will be set when the client connects via WS
     }
-    if not chats: 
+    
+    if not chats.get(chat_session_id): 
       chats[chat_session_id] = {
         "chatSessionId": chat_session_id,
         "language": language,
-        "conversation_history": None
+        "user_status": None,
+        "user_id": None,
+        "conversation_history": None,
+        "memories": None
       }
 
     return jsonify({"session_id": session_id})
@@ -165,20 +203,21 @@ def upload_audio_chunk(chat_session_id, session_id):
               type: string
               description: Description of the error
     """
-    print("UPLOAD AUDIO")
+    # print("UPLOAD AUDIO")
     if session_id not in sessions:
         return jsonify({"error": "Session not found"}), 404
 
     audio_data = request.get_data()  # raw binary data from the POST body
-
+    
     if sessions[session_id]["audio_buffer"] is not None:
-        sessions[session_id]["audio_buffer"] = sessions[session_id]["audio_buffer"] + audio_data
+      sessions[session_id]["audio_buffer"] = sessions[session_id]["audio_buffer"] + audio_data
     else:
-        sessions[session_id]["audio_buffer"] = audio_data
-
+      sessions[session_id]["audio_buffer"] = audio_data
+      
     # TODO optionally transcribe real time audio chunks, see transcribe_preview()
-    # if sessions[session_id]["audio_buffer"] is not None:
-    #   text = transcribe_preview(sessions[session_id])
+    
+    if sessions[session_id]["audio_buffer"] is not None:
+      text = transcribe_preview(sessions[session_id])
     
     return jsonify({"status": "audio_chunk_received"})
 
@@ -220,20 +259,54 @@ def close_session(chat_session_id, session_id):
               type: string
               example: Session not found
     """
-    print("CLOSE SESSION")
+    print("-------------------------------------CLOSING SESSION---------------------------------------------")
     if session_id not in sessions:
         return jsonify({"error": "Session not found"}), 404
 
+
     if sessions[session_id]["audio_buffer"] is not None:
         # TODO preprocess audio/text, extract and save speaker identification
-
-        text = transcribe_whisper(sessions[session_id]["audio_buffer"]) 
+        sessions[session_id]["text"] = transcribe_whisper(sessions[session_id]["audio_buffer"])
+        
+        if sessions[session_id]["user_status"] is None:
+          sessions[session_id]["user_id"] = audio_database.check_existing_user(users)
+          chats[chat_session_id]["user_id"] = sessions[session_id]["user_id"]
+        
+        existing_customers = pd.read_sql("Select * from user_data", memory_database.db_conn)
+        # print(existing_customers)
+        if sessions[session_id]["user_id"] in existing_customers["user_id"].unique().tolist():
+          
+          print(f"{blue}We know this customers preferences{reset}")
+          
+          sessions[session_id]["user_status"] = "Old Customer"
+          chats[chat_session_id]["user_status"] = "Old Customer"
+          
+          memory = existing_customers[existing_customers["user_id"] == chats[chat_session_id]["user_id"]]["memory_summary"].values[0]
+          sessions[session_id]["memories"] = memory
+          chats[chat_session_id]["memories"] = memory
+        
+        else:
+          print(f"{blue}No history with {chats[chat_session_id]["user_id"]}{reset}")
+          sessions[session_id]["user_status"] = "New Customer"
+          chats[chat_session_id]["user_status"] = "New Customer"
+          # with open("src/constants.txt", "r") as f:
+          #   users = int(f.read())
+ 
         # send transcription
         ws = sessions[session_id].get("websocket")
         if ws:
+          weather = random.choice(['warm', 'cold', 'chilly', 'hot', 'rainy', 'dry'])
+          holiday = random.choice(['Haloween', 'NA', 'NA', 'NA', 'Easter', 'NA', 'NA', 'NA', 'Christmas', 'New Year', 'NA', 'OktoberFest', 'NA', 'NA'])
+          add_on_prompt = f"""\nThis above was the user query. You are an all cusine restaurant.  
+          Act as a very professional waiter, in addition to answering:
+          1. You can also suggest specials of the day, be creative and short with this.
+          2. or Drinks based on todays {weather}
+          3. or Come up with holiday/occasion specials. Current Holiday: {holiday}
+          These are not compulsory. Don't need to do it always. And do not do all of them. If there is a holiday, prioritize this and wish the customer as well.
+          Keep it short."""
           message = {
               "event": "recognized",
-              "text": text,
+              "text": sessions[session_id]["text"] + add_on_prompt,
               "language": sessions[session_id]["language"]
           }
           ws.send(json.dumps(message))
@@ -332,27 +405,21 @@ def set_memories(chat_session_id):
     print("----------ENTERING SET MEMORIES----------------")
     chat_history = request.get_json()
     
-    for msg in chat_history[-3:]:
-      if msg.get("audioFilePath") is not None:
-        print("Audio dict skipped")
-      elif msg.get("type") == 0:
-        add_message_to_history(chat_session_id, role = "user", msg = msg)
-      else:
-        add_message_to_history(chat_session_id, role = "assistant", msg = msg)
-    
-    print(chats[chat_session_id]["conversation_history"])
-    
-    
-    # if chats[chat_session_id]["conversation_history"] is not None:
-    #       print("SET MEMORIES")
-    #       print(chats[chat_session_id]["conversation_history"])
-          
     
     # if not isinstance(chats[chat_session_id]["conversation_history"], list):
     #   return jsonify({"error": "Chat history is of invalid format"}), 400
         
     # TODO preprocess data (chat history & system message) Here we can use what shivam had sent on the group to identify user behaviours
+    for msg in chat_history[-3:]:
+      if msg.get("audioFilePath") is not None:
+        pass
+        # print("Audio dict skipped")
+      elif msg.get("type") == 0:
+        add_message_to_history(chat_session_id, role = "user", msg = msg)
+      else:
+        add_message_to_history(chat_session_id, role = "assistant", msg = msg)
     
+    print(f"{green}{chats[chat_session_id]["conversation_history"][-1]}{reset}")
     # print(f"{chat_session_id} extracting memories for conversation a:{chat_history[-1]['text']}")
 
     return jsonify({"success": "1"})
@@ -385,12 +452,70 @@ def get_memories(chat_session_id):
       404:
         description: Chat session not found.
     """
-    print("GET MEMORIES")
-    print(f"{chat_session_id}: replacing memories...")
+    print("-----------------------------GET MEMORIES-------------------------------")
+    # print(f"{chat_session_id}: updating memories...")
     # print(chats[chat_session_id]["conversation_history"])
+    # print(chats[chat_session_id]["user_status"])
+    
+      
+    if chats[chat_session_id]["user_status"] == "Old Customer":
+      summary_messages = {"role":"system", 
+                          "content": f"""You are a helpful assistant for a restaurant. You're task is to update your observations about existing customers. 
+                          You have a look at the conversations of your AI Powered waiter with a customer along with the customers old summary and generate a summary of what the customer likes and dislikes and what are the favorite orders.
+                          Strictly fix to observing likes, dislikes, prefrences, allergies etc. DO NOT INCLUDE ANY OTHER INFORMATION.
+                          Here is the old summary of the customer: {chats[chat_session_id]["memories"]}
+                            
+                          Make sure the output looks like this:
+                          Preferred Food: If a user has ordered a food multiple times based on memories and chat history or Not sure but xyz if you are somewhat uncertain and NA if you are clueless
+                          Likes: food or cuisine the user likes to order or NA if not sure
+                          Dislikes: food or cuisine the user doesn't like or NA if not sure
+                          Allergies: if the user mentions an allergy or NA if not sure
+                          Dietary Restrictions: if any
+                          Type: Vegan or Vegetarian or Non Vegertarian or NA if not sure
+                          Do not use any single or double apostrophe in your answer"""}
+    else:
+      summary_messages = {"role":"system", 
+                            "content": f"""You are a helpful assistant for a restaurant. You're task is to generate your observations about New customers. 
+                            You have a look at the conversations of your AI Powered waiter with a customer and generate a summary of what the customer likes and dislikes and what are the favorite orders.
+                            Strictly fix to observing likes, dislikes, prefrences, allergies etc. DO NOT INCLUDE ANY OTHER INFORMATION.
+                            
+                            Make sure the output looks like this:
+                            Likes: food the user likes to order or NA if not sure
+                            Dislikes: food the user doesn't want or NA if not sure
+                            Allergies: if the user mentions an allergy or NA if not sure
+                            Type: Vegan or Vegetarian or Non Vegertarian or NA if not sure
+                            Dietary Restrictions: if any
+                            If you are unsure of any, just say New customer: could not grasp much information
+                            Do not use any single or double apostrophe in your answer"""}
+      
+    if chats[chat_session_id]["conversation_history"] is not None:
+      conversation_history = "\n".join(str(msg) for msg in chats[chat_session_id]["conversation_history"])
+      messages = [summary_messages, {"role": "user", "content": conversation_history}]
+    else:
+      messages = [summary_messages]
+      
+    completion = client.chat.completions.create(
+      model = "gpt-4o",
+      messages = messages
+      )
+      
+    summary = completion.choices[0].message.content
+       
+    print(f"{green}User Summary: {summary}{reset}")
+    if chats[chat_session_id]["user_status"] == "New Customer":
+      data = {"user_id":chats[chat_session_id]["user_id"], "memory":summary}
+      memory_database.add_new_user(data)
+    else:
+      data = {"user_id":chats[chat_session_id]["user_id"], "memory":summary}
+      memory_database.update_existing_user(data)
 
     # TODO load relevant memories from your database. Example return value:
-    return jsonify({"memories": "The guest typically orders menu 1 and a glass of sparkling water."})
+    if chats[chat_session_id]["user_status"] == "Old Customer":
+      summary = chats[chat_session_id]["memories"]
+    else:
+      summary = "New customer: could not grasp much information"
+      
+    return jsonify({"memories": summary})
 
 
 if __name__ == "__main__":
