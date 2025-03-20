@@ -1,0 +1,13 @@
+python-dotenv
+flask
+requests
+flask-sock
+flask-cors
+azure-cognitiveservices-speech
+flasgger
+openai
+pandas
+numpy
+pymysql
+pyannote.audio
+qdrant_client
