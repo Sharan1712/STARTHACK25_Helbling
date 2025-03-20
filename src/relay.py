@@ -29,6 +29,9 @@ AZURE_SPEECH_REGION = os.getenv("AZURE_SPEECH_REGION")
 OPENAI_KEY = os.getenv("OPENAI_KEY")
 client = OpenAI(api_key=OPENAI_KEY)
 
+qdrant_uri = os.getenv("qdrant_uri")
+qdrant_api_key = os.getenv("qdrant_api_key")
+
 
 app = Flask(__name__)
 sock = Sock(app)
@@ -36,7 +39,7 @@ cors = CORS(app)
 swagger = Swagger(app)
 
 memory_database = ConversationDB()
-audio_database = AudioVectorDB()
+audio_database = AudioVectorDB(qdrant_uri, qdrant_api_key)
 
 with open("src/constants.txt", "r") as f:
   users = int(f.read())

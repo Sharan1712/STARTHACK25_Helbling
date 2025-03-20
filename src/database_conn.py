@@ -42,9 +42,9 @@ class ConversationDB:
         
 class AudioVectorDB:
     
-    def __init__(self):
-        qdrant_uri = 'https://e381cc1c-54d2-40fb-a903-d0df59ccf19b.europe-west3-0.gcp.cloud.qdrant.io' # Paste your URI
-        qdrant_api_key = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhY2Nlc3MiOiJtIn0.bODd65Rq0v41q_HxoQbBQYTagtOD3gE6y38FOGly6pQ' # Paste your API KEY
+    def __init__(self, uri, key):
+        qdrant_uri = uri
+        qdrant_api_key = key
         self.qdrant_client = QdrantClient(url = qdrant_uri, api_key=qdrant_api_key)
         
         speech_emb_model = Model.from_pretrained("pyannote/embedding", use_auth_token="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")
