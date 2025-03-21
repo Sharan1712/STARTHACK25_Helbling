@@ -11,3 +11,6 @@ numpy
 pymysql
 pyannote.audio
 qdrant_client
+streamlit
+boto3
+transformers
