@@ -40,7 +40,7 @@ cors = CORS(app)
 swagger = Swagger(app)
 
 memory_database = ConversationDB()
-audio_database = AudioVectorDB(qdrant_uri, qdrant_api_key)
+audio_database = AudioVectorDB(qdrant_uri, qdrant_api_key, hf_token=os.getenv("HF_TOKEN"))
 
 with open("src/constants.txt", "r") as f:
   users = int(f.read())

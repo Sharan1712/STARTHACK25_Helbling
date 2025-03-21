@@ -42,10 +42,10 @@ class ConversationDB:
         
 class AudioVectorDB:
     
-    def __init__(self, uri, key):
+    def __init__(self, uri, key, hf_token):
         self.qdrant_client = QdrantClient(url = uri, api_key = key)
         
-        speech_emb_model = Model.from_pretrained("pyannote/embedding", use_auth_token="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")
+        speech_emb_model = Model.from_pretrained("pyannote/embedding", use_auth_token=hf_token)
         self.inference = Inference(speech_emb_model, window="whole")
         self.color = '\033[92m'
         self.reset = '\033[0m'
