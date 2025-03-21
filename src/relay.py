@@ -70,7 +70,7 @@ def transcribe_whisper(audio_recording, denoise = False):
     if denoise:
       upload_audio_file(os.getenv("AWS_ACCESS_KEY_ID"), os.getenv("AWS_SECRET_ACCESS_KEY"), os.getenv("AWS_REGION"))
       audio_file = down_audio_file(os.getenv("AWS_ACCESS_KEY_ID"), os.getenv("AWS_SECRET_ACCESS_KEY"), os.getenv("AWS_REGION"))
-      audio_file = f"{audio_file}.wav"
+      # audio_file = f"{audio_file}.wav"
     
     transcription = client.audio.transcriptions.create(
         model="whisper-1",
@@ -277,7 +277,7 @@ def close_session(chat_session_id, session_id):
 
     if sessions[session_id]["audio_buffer"] is not None:
         # TODO preprocess audio/text, extract and save speaker identification
-        sessions[session_id]["text"] = transcribe_whisper(sessions[session_id]["audio_buffer"], denoise = False)
+        sessions[session_id]["text"] = transcribe_whisper(sessions[session_id]["audio_buffer"], denoise = True)
         
         if sessions[session_id]["user_status"] is None:
           sessions[session_id]["user_id"] = audio_database.check_existing_user(users)
