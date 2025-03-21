@@ -75,7 +75,7 @@ def transcribe_whisper(audio_recording, denoise = False):
     transcription = client.audio.transcriptions.create(
         model="whisper-1",
         file=audio_file,
-        #language = ""  # specify Language explicitly
+        # language =   # specify Language explicitly
     )
     print(f"{green}USER MESSAGE: {transcription.text}{reset}")
     return transcription.text
@@ -163,7 +163,8 @@ def open_session(chat_session_id):
         "user_status": None,
         "user_id": None,
         "conversation_history": None,
-        "memories": None
+        "memories": None,
+        "count": 1,
       }
 
     return jsonify({"session_id": session_id})
@@ -305,22 +306,26 @@ def close_session(chat_session_id, session_id):
         # send transcription
         ws = sessions[session_id].get("websocket")
         if ws:
+          user_status = chats[chat_session_id]["user_status"]
+          count = chats[chat_session_id]["count"]
           
           weather = random.choice(['warm', 'cold', 'chilly', 'hot', 'rainy', 'dry'])
           holiday = random.choice(['Haloween', 'NA', 'NA', 'NA', 'Easter', 'NA', 'NA', 'NA', 'Christmas', 'New Year', 'NA', 'OktoberFest', 'NA', 'NA'])
-          add_on_prompt = f"""\nThis above was the user query. You are an all cusine restaurant.  
-          Act as a very professional waiter, in addition to answering:
-          1. You can also suggest specials of the day, be creative and short with this.
-          2. or Drinks based on todays {weather}
-          3. or Come up with holiday/occasion specials. Current Holiday: {holiday}
+          add_on_prompt = f"""\nThis above was the query by a {user_status} (user status). If {count}>1, just focus on the question
+          Act as a very professional waiter, in addition to answering the query:
+          1. Greet the user according to the user status.
+          2. You can also suggest specials of the day, be creative and to the point with this. (Ignore if {count}>1)
+          3. or Drinks based on todays {weather} (Ignore if {count}>1)
+          4. or Come up with holiday/occasion specials. Current Holiday: {holiday} (Ignore if {count}>1)
           These are not compulsory. Do this very rarely please. And do not do all of them. If there is a holiday, prioritize this and wish the customer as well.
-          Keep it short."""
+          Keep it short. Do not repeat stuff."""
           message = {
               "event": "recognized",
               "text": sessions[session_id]["text"] + add_on_prompt,
               "language": sessions[session_id]["language"]
           }
           ws.send(json.dumps(message))
+          chats[chat_session_id]["count"] += 1
     
     # # Remove from session store
     sessions.pop(session_id, None)
