@@ -69,7 +69,7 @@ def transcribe_whisper(audio_recording, denoise = False):
     
     if denoise:
       upload_audio_file(os.getenv("AWS_ACCESS_KEY_ID"), os.getenv("AWS_SECRET_ACCESS_KEY"), os.getenv("AWS_REGION"))
-      audio_file = down_audio_file(os.getenv("AWS_ACCESS_KEY_ID"), os.getenv("AWS_SECRET_ACCESS_KEY"), os.getenv("AWS_REGION"))
+      audio_file2 = down_audio_file(os.getenv("AWS_ACCESS_KEY_ID"), os.getenv("AWS_SECRET_ACCESS_KEY"), os.getenv("AWS_REGION"))
       # audio_file = f"{audio_file}.wav"
     
     transcription = client.audio.transcriptions.create(
