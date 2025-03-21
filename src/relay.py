@@ -19,6 +19,7 @@ from flasgger import Swagger
 
 from database_conn import ConversationDB
 from database_conn import AudioVectorDB
+from aws_conn import upload_audio_file, down_audio_file
 
 from openai import OpenAI
 import pandas as pd
@@ -61,10 +62,16 @@ def add_message_to_history(chat_session_id, role, msg):
   else:
     chats[chat_session_id]["conversation_history"] = [{"role":role,"content":msg.get('text')}]
 
-def transcribe_whisper(audio_recording):
+def transcribe_whisper(audio_recording, denoise = False):
     audio_file = io.BytesIO(audio_recording)
     audio_file.name = 'audio.wav'  # Whisper requires a filename with a valid extension
     save_audio(audio_file)
+    
+    if denoise:
+      upload_audio_file(os.getenv("AWS_ACCESS_KEY_ID"), os.getenv("AWS_SECRET_ACCESS_KEY"), os.getenv("AWS_REGION"))
+      audio_file = down_audio_file(os.getenv("AWS_ACCESS_KEY_ID"), os.getenv("AWS_SECRET_ACCESS_KEY"), os.getenv("AWS_REGION"))
+      audio_file = f"{audio_file}.wav"
+    
     transcription = client.audio.transcriptions.create(
         model="whisper-1",
         file=audio_file,
@@ -130,7 +137,7 @@ def open_session(chat_session_id):
               description: Description of the error
     """
     session_id = str(uuid.uuid4())
-    print("----------------------------------SESSION START-----------------------------------------------------")
+    print("-----------------------------------------------------SESSION START-----------------------------------------------------")
 
     body = request.get_json()
     if "language" not in body:
@@ -262,14 +269,14 @@ def close_session(chat_session_id, session_id):
               type: string
               example: Session not found
     """
-    print("-------------------------------------CLOSING SESSION---------------------------------------------")
+    print("-----------------------------------------------------CLOSING SESSION-----------------------------------------------------")
     if session_id not in sessions:
         return jsonify({"error": "Session not found"}), 404
 
 
     if sessions[session_id]["audio_buffer"] is not None:
         # TODO preprocess audio/text, extract and save speaker identification
-        sessions[session_id]["text"] = transcribe_whisper(sessions[session_id]["audio_buffer"])
+        sessions[session_id]["text"] = transcribe_whisper(sessions[session_id]["audio_buffer"], denoise = False)
         
         if sessions[session_id]["user_status"] is None:
           sessions[session_id]["user_id"] = audio_database.check_existing_user(users)
@@ -298,6 +305,7 @@ def close_session(chat_session_id, session_id):
         # send transcription
         ws = sessions[session_id].get("websocket")
         if ws:
+          
           weather = random.choice(['warm', 'cold', 'chilly', 'hot', 'rainy', 'dry'])
           holiday = random.choice(['Haloween', 'NA', 'NA', 'NA', 'Easter', 'NA', 'NA', 'NA', 'Christmas', 'New Year', 'NA', 'OktoberFest', 'NA', 'NA'])
           add_on_prompt = f"""\nThis above was the user query. You are an all cusine restaurant.  
@@ -305,7 +313,7 @@ def close_session(chat_session_id, session_id):
           1. You can also suggest specials of the day, be creative and short with this.
           2. or Drinks based on todays {weather}
           3. or Come up with holiday/occasion specials. Current Holiday: {holiday}
-          These are not compulsory. Don't need to do it always. And do not do all of them. If there is a holiday, prioritize this and wish the customer as well.
+          These are not compulsory. Do this very rarely please. And do not do all of them. If there is a holiday, prioritize this and wish the customer as well.
           Keep it short."""
           message = {
               "event": "recognized",
@@ -405,7 +413,7 @@ def set_memories(chat_session_id):
       400:
         description: Invalid request data.
     """
-    print("----------ENTERING SET MEMORIES----------------")
+    print("-----------------------------------------------------ENTERING SET MEMORIES-----------------------------------------------------")
     chat_history = request.get_json()
     
     
@@ -455,7 +463,7 @@ def get_memories(chat_session_id):
       404:
         description: Chat session not found.
     """
-    print("-----------------------------GET MEMORIES-------------------------------")
+    print("-----------------------------------------------------GET MEMORIES-----------------------------------------------------")
     # print(f"{chat_session_id}: updating memories...")
     # print(chats[chat_session_id]["conversation_history"])
     # print(chats[chat_session_id]["user_status"])
@@ -498,13 +506,14 @@ def get_memories(chat_session_id):
       messages = [summary_messages]
       
     completion = client.chat.completions.create(
-      model = "gpt-4o",
+      model = "gpt-4o-mini",
       messages = messages
       )
       
     summary = completion.choices[0].message.content
        
-    print(f"{green}User Summary: {summary}{reset}")
+    print(f"{blue}User Summary: {summary}{reset}")
+    
     if chats[chat_session_id]["user_status"] == "New Customer":
       data = {"user_id":chats[chat_session_id]["user_id"], "memory":summary}
       memory_database.add_new_user(data)
