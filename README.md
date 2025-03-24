@@ -101,6 +101,11 @@ npm install -g redoc-cli
 redoc-cli bundle docs/apispec.json -o docs/apispec.html
 ```
 
-## Support
+## Architecture
 
-Visit us at our Helbling Booth in the Hack area or drop us a message in discord.
+<p align="center">
+  <img src="assets/Architecture.png" width="800" />
+</p>
+<p align="center">
+    <b>Application Architecture</b> 
+</p>
